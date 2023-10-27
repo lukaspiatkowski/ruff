@@ -64,3 +64,14 @@ def f():
     self._cached_dependencies_by_level: dict[
         int, list[DependencyCacheKey]
     ] = collections.defaultdict(list)
+
+
+# https://github.com/astral-sh/ruff/issues/8279
+# https://github.com/psf/black/pull/3964
+f(
+    [
+        1,
+        2,
+        3,
+    ]
+)
