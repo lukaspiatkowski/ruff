@@ -82,6 +82,7 @@ pub enum Parentheses {
     Never,
 }
 
+/// Returns `true` if the [`ExpressionRef`] is enclosed by parentheses in the source code.
 pub(crate) fn is_expression_parenthesized(
     expr: ExpressionRef,
     comment_ranges: &CommentRanges,
@@ -123,6 +124,7 @@ where
     FormatParenthesized {
         left,
         comments: &[],
+        indent: true,
         content: Argument::new(content),
         right,
     }
@@ -131,6 +133,7 @@ where
 pub(crate) struct FormatParenthesized<'content, 'ast> {
     left: &'static str,
     comments: &'content [SourceComment],
+    indent: bool,
     content: Argument<'content, PyFormatContext<'ast>>,
     right: &'static str,
 }
@@ -151,6 +154,11 @@ impl<'content, 'ast> FormatParenthesized<'content, 'ast> {
     ) -> FormatParenthesized<'content, 'ast> {
         FormatParenthesized { comments, ..self }
     }
+
+    /// Whether to indent the content within the parentheses.
+    pub(crate) fn with_indent(self, indent: bool) -> FormatParenthesized<'content, 'ast> {
+        FormatParenthesized { indent, ..self }
+    }
 }
 
 impl<'ast> Format<PyFormatContext<'ast>> for FormatParenthesized<'_, 'ast> {
@@ -158,10 +166,15 @@ impl<'ast> Format<PyFormatContext<'ast>> for FormatParenthesized<'_, 'ast> {
         let current_level = f.context().node_level();
 
         let content = format_with(|f| {
-            group(&format_args![
-                dangling_open_parenthesis_comments(self.comments),
-                soft_block_indent(&Arguments::from(&self.content))
-            ])
+            group(&format_with(|f| {
+                dangling_open_parenthesis_comments(self.comments).fmt(f)?;
+                if self.indent {
+                    soft_block_indent(&Arguments::from(&self.content)).fmt(f)?;
+                } else {
+                    Arguments::from(&self.content).fmt(f)?;
+                }
+                Ok(())
+            }))
             .fmt(f)
         });
 

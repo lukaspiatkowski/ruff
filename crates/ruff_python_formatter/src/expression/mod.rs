@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 use std::slice;
 
 use ruff_formatter::{
-    write, FormatOwnedWithRule, FormatRefWithRule, FormatRule, FormatRuleWithOptions,
+    write, FormatContext, FormatOwnedWithRule, FormatRefWithRule, FormatRule, FormatRuleWithOptions,
 };
 use ruff_python_ast as ast;
 use ruff_python_ast::parenthesize::parentheses_iterator;
@@ -124,10 +124,13 @@ impl FormatRule<Expr, PyFormatContext<'_>> for FormatExpr {
             Parentheses::Never => false,
         };
         if parenthesize {
-            let comment = f.context().comments().clone();
-            let node_comments = comment.leading_dangling_trailing(expression);
+            let comments = f.context().comments().clone();
+            let node_comments = comments.leading_dangling_trailing(expression);
             if !node_comments.has_leading() && !node_comments.has_trailing() {
-                parenthesized("(", &format_expr, ")").fmt(f)
+                let hug = f.options().preview().is_enabled() && is_expression_huggable(expression);
+                parenthesized("(", &format_expr, ")")
+                    .with_indent(!hug)
+                    .fmt(f)
             } else {
                 format_with_parentheses_comments(expression, &node_comments, f)
             }
@@ -398,33 +401,45 @@ impl Format<PyFormatContext<'_>> for MaybeParenthesizeExpression<'_> {
         match needs_parentheses {
             OptionalParentheses::Multiline => match parenthesize {
                 Parenthesize::IfBreaksOrIfRequired => {
+                    let indent = !(f.context().options().preview().is_enabled()
+                        && is_expression_huggable(expression));
                     parenthesize_if_expands(&expression.format().with_options(Parentheses::Never))
+                        .with_indent(indent)
                         .fmt(f)
                 }
+
                 Parenthesize::IfRequired => {
                     expression.format().with_options(Parentheses::Never).fmt(f)
                 }
+
                 Parenthesize::Optional | Parenthesize::IfBreaks => {
                     if can_omit_optional_parentheses(expression, f.context()) {
                         optional_parentheses(&expression.format().with_options(Parentheses::Never))
                             .fmt(f)
                     } else {
+                        let indent = !(f.context().options().preview().is_enabled()
+                            && is_expression_huggable(expression));
                         parenthesize_if_expands(
                             &expression.format().with_options(Parentheses::Never),
                         )
+                        .with_indent(indent)
                         .fmt(f)
                     }
                 }
             },
             OptionalParentheses::BestFit => match parenthesize {
                 Parenthesize::IfBreaksOrIfRequired => {
+                    let indent = !(f.context().options().preview().is_enabled()
+                        && is_expression_huggable(expression));
                     parenthesize_if_expands(&expression.format().with_options(Parentheses::Never))
+                        .with_indent(indent)
                         .fmt(f)
                 }
 
                 Parenthesize::Optional | Parenthesize::IfRequired => {
                     expression.format().with_options(Parentheses::Never).fmt(f)
                 }
+
                 Parenthesize::IfBreaks => {
                     if node_comments.has_trailing() {
                         expression.format().with_options(Parentheses::Always).fmt(f)
@@ -440,7 +455,10 @@ impl Format<PyFormatContext<'_>> for MaybeParenthesizeExpression<'_> {
             },
             OptionalParentheses::Never => match parenthesize {
                 Parenthesize::IfBreaksOrIfRequired => {
+                    let indent = !(f.context().options().preview().is_enabled()
+                        && is_expression_huggable(expression));
                     parenthesize_if_expands(&expression.format().with_options(Parentheses::Never))
+                        .with_indent(indent)
                         .fmt(f)
                 }
 
@@ -1024,6 +1042,80 @@ pub(crate) fn has_own_parentheses(
         }
 
         _ => None,
+    }
+}
+
+/// Returns `true` if the expression can hug directly to enclosing parentheses.
+///
+/// For example, in preview style, given:
+/// ```python
+/// ([1, 2, 3,])
+/// ```
+///
+/// We want to format it as:
+/// ```python
+/// ([
+///     1,
+///     2,
+///     3,
+/// ])
+/// ```
+///
+/// As opposed to:
+/// ```python
+/// (
+///     [
+///         1,
+///         2,
+///         3,
+///     ]
+/// )
+/// ```
+pub(crate) fn is_expression_huggable(expr: &Expr) -> bool {
+    match expr {
+        Expr::List(_)
+        | Expr::Set(_)
+        | Expr::Dict(_)
+        | Expr::ListComp(_)
+        | Expr::SetComp(_)
+        | Expr::DictComp(_) => true,
+
+        Expr::Starred(ast::ExprStarred { value, .. }) => matches!(
+            value.as_ref(),
+            Expr::List(_)
+                | Expr::Set(_)
+                | Expr::Dict(_)
+                | Expr::ListComp(_)
+                | Expr::SetComp(_)
+                | Expr::DictComp(_)
+        ),
+
+        Expr::BoolOp(_)
+        | Expr::NamedExpr(_)
+        | Expr::BinOp(_)
+        | Expr::UnaryOp(_)
+        | Expr::Lambda(_)
+        | Expr::IfExp(_)
+        | Expr::GeneratorExp(_)
+        | Expr::Await(_)
+        | Expr::Yield(_)
+        | Expr::YieldFrom(_)
+        | Expr::Compare(_)
+        | Expr::Call(_)
+        | Expr::FormattedValue(_)
+        | Expr::FString(_)
+        | Expr::Attribute(_)
+        | Expr::Subscript(_)
+        | Expr::Name(_)
+        | Expr::Tuple(_)
+        | Expr::Slice(_)
+        | Expr::IpyEscapeCommand(_)
+        | Expr::StringLiteral(_)
+        | Expr::BytesLiteral(_)
+        | Expr::NumberLiteral(_)
+        | Expr::BooleanLiteral(_)
+        | Expr::NoneLiteral(_)
+        | Expr::EllipsisLiteral(_) => false,
     }
 }
 
